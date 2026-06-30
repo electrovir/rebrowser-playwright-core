@@ -37,6 +37,12 @@
     "name": "Microsoft Corporation"
   },
   "license": "Apache-2.0",
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "test:features": "node --test tests/features.test.mjs",
+    "test:bot-detector": "node --test tests/bot-detector.test.mjs",
+    "test:all": "npm run test:features && npm run test:bot-detector"
+  },
   "exports": {
     ".": {
       "types": "./index.d.ts",

@@ -1,0 +1,21 @@
+name: test
+
+on: push
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # This package has no npm dependencies and the tests use Node's built-in test runner, so no
+      # `npm install` is needed. We only need the patched Chromium build (plus its OS libraries).
+      - name: Install Chromium + OS dependencies
+        run: node cli.js install --with-deps chromium
+
+      - name: Run tests
+        run: npm run test:all
