@@ -24,6 +24,20 @@ Both repos are **published build artifacts** — there is no `src/`, no build st
 sets up a real patch→build pipeline, this guide's "where" still applies; the "how to edit" becomes
 "edit the patch source then rebuild".)
 
+### Versioning scheme
+
+The first two version segments track the upstream Playwright version. The patch segment is
+fork-local and encodes `<upstream-patch><fork-revision>` (zero-padded), so it always sorts *after*
+the upstream release while staying pinned to a recognizable base:
+
+- `1.61.100` → based on Playwright `1.61.1`, fork revision `00` (initial publish for this base).
+- Fork-only fix that does *not* change the Playwright version → `1.61.101`, then `1.61.102`, …
+- New upstream base `1.61.2` → fork versions restart at `1.61.200`.
+
+**Never** use a pre-release tag (`1.61.1-fix.1`) for a fork fix: pre-releases sort *before* `1.61.1`
+and are excluded from normal `^`/`~` ranges. Bump the fork revision (both packages) on every
+publish, and reset it when the upstream base changes.
+
 ### Layer 1 — rebrowser-patches (upstream stealth)
 
 This is the community project [rebrowser-patches](https://github.com/rebrowser/rebrowser-patches).
@@ -179,7 +193,7 @@ Upstream is `|| "addBinding"`. This is the **only** place the default mode is de
      start from their published `playwright-core` build (or run their patch tool against
      `playwright-core@<target>`).
    - Re-scope `package.json` `name` to `@electrovir/rebrowser-playwright-core`, keep
-     `publishConfig.access: public`, and set the new `version` to match the Playwright version.
+     `publishConfig.access: public`, and set the new `version` per the scheme below.
    - Verify Layer 1 is present: `grep -c "__re__emitExecutionContext" lib/coreBundle.js` should be
      ≥ 1 and the `REBROWSER_PATCHES_*` env vars should appear.
 
