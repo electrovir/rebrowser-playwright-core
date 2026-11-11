@@ -3,7 +3,7 @@
   "publishConfig": {
       "access": "public"
   },
-  "version": "1.61.101",
+  "version": "1.64.100",
   "description": "A drop-in replacement for playwright-core patched with rebrowser-patches. It allows to pass modern automation detection tests.",
   "keywords": [
     "rebrowser",
@@ -31,7 +31,7 @@
   },
   "homepage": "https://playwright.dev",
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "author": {
     "name": "Microsoft Corporation"

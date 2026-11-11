@@ -62,7 +62,7 @@ What it buys us (verified by the bot-detector test): no `Runtime.enable` leak, n
 
 ### Layer 2 — our patches (this fork's additions)
 
-Three edits, all in `lib/coreBundle.js`, all inside the rebrowser runtime-fix machinery. They exist
+Three edits (one now shipped upstream), all in `lib/coreBundle.js`, all inside the rebrowser runtime-fix machinery. They exist
 because porting rebrowser-patches to **Playwright ≥ 1.60 broke locators**, and because we want
 maximum stealth by default. **These are the things most likely to break on upgrade.** Section 3
 documents each one.
@@ -104,9 +104,9 @@ locators will hang again and you'll be back here.
 
 ---
 
-## 3. Our three patches (re-apply / re-verify these on every upgrade)
+## 3. Our patches (re-apply / re-verify these on every upgrade)
 
-All three live in the `__re__emitExecutionContext` method (and one line just above it). Find it:
+All of them live in the `__re__emitExecutionContext` method (and one line just above it). Find it:
 
 ```
 grep -n "__re__emitExecutionContext" lib/coreBundle.js   # the method def is the big one (~line 33840)
@@ -115,58 +115,31 @@ grep -n "this.utilityWorldName ="    lib/coreBundle.js   # confirms PW's current
 grep -n "_onExecutionContextCreated" lib/coreBundle.js   # confirms the world-matching logic
 ```
 
-### Patch A — utility-world name in `addBinding` mode
+### Patch A — utility-world name (upstream since rebrowser 1.64.102)
 
-In the `fixMode === "addBinding"` branch, the `world === "utility"` case must emit the context under
-**the page's current utility-world name**, not a hardcoded string:
+The `world === "utility"` case must emit the context under **the page's current utility-world
+name** (`frame?._page?.delegate?.utilityWorldName`), not a hardcoded string. Upstream rebrowser
+1.64.102 does this itself: it sets `CRPage.utilityWorldName` from `REBROWSER_PATCHES_UTILITY_WORLD_NAME`
+(default `"util"`) and handles `world === "utility"` before branching on the fix mode, so there is
+nothing to re-apply. Re-check it if upstream ever emits a literal `name: "__playwright_utility_world__"`
+again.
 
-```js
-return {
-  id: contextId,
-  // Must equal crPage.utilityWorldName so _onExecutionContextCreated maps this to "utility".
-  // PW ≥1.60 makes that name per-page (__playwright_utility_world_<guid>); the old hardcoded
-  // "__playwright_utility_world__" no longer matches and hangs every locator query.
-  name: frame?._page?.delegate?.utilityWorldName ?? "__playwright_utility_world__",
-  auxData: { frameId: targetId, isDefault: false }
-};
-```
+### Patch B — distinct world names in `alwaysIsolated` mode
 
-The upstream value to replace is the literal `name: "__playwright_utility_world__"`.
-
-### Patch B — utility world support in `alwaysIsolated` mode
-
-Upstream's `alwaysIsolated` branch ignores `world` and reports **everything** as the default (main)
-world, so the utility world never exists → locators hang. Replace it so it mirrors the `addBinding`
-mapping, backing **both** worlds with isolated worlds but giving them **distinct CDP world names**
-(see the critical note below):
+In the `fixMode === "alwaysIsolated" && frame` branch (the main-world request), upstream creates the
+isolated world with `worldName: utilityWorldName`, the same name the utility branch uses. Change it
+to `` worldName: `${utilityWorldName}__main` ``:
 
 ```js
-} else if (fixMode === "alwaysIsolated") {
-  // Back both main and utility with isolated worlds (never the real main world — that's the
-  // detection vector). Report the utility request under crPage.utilityWorldName/isDefault:false
-  // and the main request as the default world, so locators get a utility world AND evaluate stays
-  // out of the page main world.
-  //
-  // CRITICAL: main and utility MUST use different CDP world names. Page.createIsolatedWorld keys on
-  // worldName, so reusing one name returns the SAME execution context for both worlds, corrupting
-  // the main/utility mapping (order-dependent hangs when a locator is the first operation).
-  const isUtility = world === "utility";
-  getWorldPromise = this.__re__getIsolatedWorld({
-    client: this,
-    frameId: targetId,
-    worldName: isUtility ? utilityWorldName : `${utilityWorldName}__main`
-  }).then((contextId) => {
-    return {
-      id: contextId,
-      name: isUtility ? frame?._page?.delegate?.utilityWorldName ?? "__playwright_utility_world__" : "",
-      auxData: { frameId: targetId, isDefault: !isUtility }
-    };
-  });
+} else if (fixMode === "alwaysIsolated" && frame) {
+  // CRITICAL: main and utility MUST use different CDP world names. ...
+  const contextId4 = await this.__re__getIsolatedWorld({ client: this, frameId: targetId, worldName: `${utilityWorldName}__main` });
+  contextPayload = { id: contextId4, name: "", auxData: { frameId: targetId, isDefault: true } };
 }
 ```
 
-The upstream version creates one world with `worldName: utilityWorldName` and always returns
-`{ name: "", auxData: { isDefault: true } }`.
+On 1.64.102 the features test passes with or without this edit, so it is no longer proven necessary.
+It is kept so `page.evaluate` and Playwright's injected locator scripts never share one JS world.
 
 ### Patch C — default mode is `alwaysIsolated`
 
@@ -197,7 +170,7 @@ Upstream is `|| "addBinding"`. This is the **only** place the default mode is de
    - Verify Layer 1 is present: `grep -c "__re__emitExecutionContext" lib/coreBundle.js` should be
      ≥ 1 and the `REBROWSER_PATCHES_*` env vars should appear.
 
-2. **Re-apply our three patches (Section 3).** Don't blind-replace by line number — the bundle
+2. **Re-apply our patches (Section 3).** Don't blind-replace by line number — the bundle
    shifts every release. Use the `grep` anchors, read the surrounding code, and confirm the
    assumptions still hold:
    - Does `_onExecutionContextCreated` still match utility via `contextPayload.name === this._crPage.utilityWorldName`? If the matching changed, Patch A/B's `name:` value must change to match.
@@ -258,8 +231,8 @@ CI runs this on every push via `.github/workflows/test.yml` (`npm run test:all`)
 ## 6. Quick checklist
 
 - [ ] Layer 1 (rebrowser) present for the new version (`__re__*`, `REBROWSER_PATCHES_*`).
-- [ ] Patch A: utility name in `addBinding` = `frame?._page?.delegate?.utilityWorldName ?? "__playwright_utility_world__"`.
-- [ ] Patch B: `alwaysIsolated` branches on `world`, distinct world names (`util` vs `util__main`).
+- [ ] Patch A: utility context emitted under `frame?._page?.delegate?.utilityWorldName` (upstream since 1.64.102).
+- [ ] Patch B: `alwaysIsolated` main world uses a distinct world name (`util` vs `util__main`).
 - [ ] Patch C: default mode `|| "alwaysIsolated"`.
 - [ ] `_onExecutionContextCreated` matching + `crPage.utilityWorldName` assumptions still hold.
 - [ ] `browsers.json` revision updated; browser installed.
